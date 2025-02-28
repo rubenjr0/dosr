@@ -1,6 +1,6 @@
 use std::f32;
 
-use bitvec::{order::Lsb0, view::BitView};
+use bitvec::{order::Msb0, view::BitView};
 use itertools::Itertools;
 use rustfft::{FftPlanner, num_complex::Complex};
 
@@ -14,8 +14,6 @@ type Sample = f32;
 type Frame = Vec<Chunk>;
 /// A vector of samples representing an encoded frame.
 type RawFrame = Vec<Sample>;
-/// A vector of frequencies representing a decoded frame.
-type EncodedFrame = Vec<Frequency>;
 
 #[derive(Debug)]
 pub struct MfskConfig {
@@ -61,7 +59,7 @@ impl MfskConfig {
             "Chunk index out of bounds"
         );
         self.base_freq
-            + (data + self.values_per_chunk as u8 * chunk_index as u8) as f32 * self.delta_freq
+            + (data + (self.values_per_chunk * chunk_index) as u8) as f32 * self.delta_freq
     }
 
     /// Generates samples for a sine wave with the specified arguments
@@ -76,7 +74,7 @@ impl MfskConfig {
     }
 
     fn bytes_to_chunks(&self, data: &[u8]) -> Vec<Chunk> {
-        let bit_view = data.view_bits::<Lsb0>();
+        let bit_view = data.view_bits::<Msb0>();
         bit_view
             .chunks(self.bits_per_chunk)
             .map(|c| {
@@ -93,7 +91,7 @@ impl MfskConfig {
             .collect_vec()
     }
 
-    fn encode_frame(&self, frame: Frame) -> Vec<f32> {
+    fn encode_frame(&self, frame: Frame) -> RawFrame {
         let num_samples = (self.duration_s * self.sample_rate) as usize;
         let mut samples = vec![0.0; num_samples];
         frame
@@ -146,36 +144,46 @@ impl MfskConfig {
             .take(fft_output.len() / 2)
             .map(|c| c.norm())
             .collect_vec();
-        let max_magnitude = magnitudes
-            .iter()
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(&1.0);
+        let max_magnitude = magnitudes.iter().cloned().fold(0.0f32, f32::max);
         magnitudes.iter().map(|m| m / max_magnitude).collect_vec()
     }
 
-    fn detect_frequencies(&self, fft_output: &[f32]) -> Vec<Frequency> {
+    fn detect_frequencies(&self, samples: &[f32]) -> Vec<Frequency> {
+        let fft_output = self.perform_fft(samples);
+        let magnitudes = self.normalize_fft(&fft_output);
         let bin_width = self.sample_rate / fft_output.len() as f32;
-        fft_output
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| c.abs() > 0.5)
-            .map(|(i, _)| i as f32 * bin_width)
-            .collect_vec()
+        let mut frequencies = vec![];
+        for i in 0..magnitudes.len() {
+            let mag = magnitudes[i];
+            if mag > 0.4 && mag > magnitudes[i - 1] && mag > magnitudes[i + 1] {
+                frequencies.push(i as f32 * bin_width);
+            }
+        }
+        frequencies
+    }
+
+    fn decode_frequency(&self, freq: f32, chunk_index: usize) -> u8 {
+        let value = ((freq - self.base_freq) / self.delta_freq).round() as usize;
+        let value = value - self.values_per_chunk * chunk_index;
+        value as u8
     }
 
     /// Decodes a vector of frequencies into a frame.
-    fn decode_frame(&self, frequencies: &EncodedFrame) -> Frame {
-        todo!()
+    fn decode_frame(&self, samples: &[f32]) -> Frame {
+        self.detect_frequencies(samples)
+            .iter()
+            .enumerate()
+            .map(|(chunk_idx, f)| self.decode_frequency(*f, chunk_idx))
+            .collect_vec()
     }
 
-    pub fn decode(&self, samples: &[f32]) -> Vec<Frame> {
-        let frames = self.split_into_frames(samples);
-        frames
+    pub fn decode(&self, samples: &[f32]) -> Vec<u8> {
+        self.split_into_frames(samples)
             .iter()
-            .map(|frame| self.perform_fft(frame))
-            .map(|fft_out| self.normalize_fft(&fft_out))
-            .map(|fft_out| self.detect_frequencies(&fft_out))
-            .map(|frame| self.decode_frame(&frame))
+            .flat_map(|frame| self.decode_frame(frame))
+            .chunks(8 / self.bits_per_chunk)
+            .into_iter()
+            .map(|c| c.fold(0u8, |acc, x| (acc << self.bits_per_chunk) | (x)))
             .collect_vec()
     }
 }

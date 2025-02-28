@@ -15,13 +15,15 @@ fn main() {
 
     let config = MfskConfig::new(4, 6, duration.as_secs_f32(), sample_rate);
 
+    let data = msg.as_bytes();
+    eprintln!("{data:0x?}");
     let start = Instant::now();
-    let samples = config.encode_data(msg.as_bytes());
+    let samples = config.encode_data(data);
     let elapsed = start.elapsed();
     eprintln!("Encoding time: {:?}", elapsed);
 
-    let freqs = config.decode(&samples);
-    eprintln!("Encoded freqs: {:#4.2?}", freqs);
+    let dec = config.decode(&samples);
+    eprintln!("{dec:0x?}");
 
     let spec = WavSpec {
         channels: 1,
