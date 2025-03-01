@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+argh = "0.1.13"
 bitvec = "1.0.1"
 hound = "3.5.1"
 itertools = "0.14.0"

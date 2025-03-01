@@ -119,12 +119,11 @@ impl MfskConfig {
 
 /// Decoding functionality
 impl MfskConfig {
-    fn split_into_frames(&self, samples: &[f32]) -> Vec<RawFrame> {
+    fn split_into_frames(&self, samples: &[f32]) -> impl Iterator<Item = RawFrame> {
         let samples_per_frame = (self.sample_rate * self.duration_s) as usize;
         samples
             .chunks(samples_per_frame)
             .map(|chunk| chunk.to_vec())
-            .collect_vec()
     }
 
     fn perform_fft(&self, encoded_frame: &[f32]) -> Vec<Complex<f32>> {
@@ -169,18 +168,17 @@ impl MfskConfig {
     }
 
     /// Decodes a vector of frequencies into a frame.
-    fn decode_frame(&self, samples: &[f32]) -> Frame {
+    fn decode_frame(&self, samples: &RawFrame) -> Frame {
         self.detect_frequencies(samples)
-            .iter()
+            .into_iter()
             .enumerate()
-            .map(|(chunk_idx, f)| self.decode_frequency(*f, chunk_idx))
+            .map(|(chunk_idx, f)| self.decode_frequency(f, chunk_idx))
             .collect_vec()
     }
 
     pub fn decode(&self, samples: &[f32]) -> Vec<u8> {
         self.split_into_frames(samples)
-            .iter()
-            .flat_map(|frame| self.decode_frame(frame))
+            .flat_map(|frame| self.decode_frame(&frame))
             .chunks(8 / self.bits_per_chunk)
             .into_iter()
             .map(|c| c.fold(0u8, |acc, x| (acc << self.bits_per_chunk) | (x)))
