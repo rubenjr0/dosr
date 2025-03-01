@@ -1,7 +1,7 @@
 use std::time::{Duration, Instant};
 
 use argh::FromArgs;
-use dosr::MfskConfig;
+use dosr::Dosr;
 use hound::{WavSpec, WavWriter};
 
 #[derive(FromArgs)]
@@ -28,7 +28,7 @@ fn main() {
     let args: Args = argh::from_env();
     let duration = Duration::from_millis(args.duration_ms);
     let sample_rate = args.sample_rate;
-    let config = MfskConfig::new(4, 6, duration.as_secs_f32(), sample_rate);
+    let config = Dosr::new(4, 6, duration.as_secs_f32(), sample_rate);
 
     let data = args.message.as_bytes();
     let start = Instant::now();
