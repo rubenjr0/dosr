@@ -1,6 +1,8 @@
 use std::time::{Duration, Instant};
 
+use aes_gcm_siv::Aes128GcmSiv;
 use argh::FromArgs;
+use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::OsRng};
 use dosr::Dosr;
 use hound::{WavSpec, WavWriter};
 
@@ -20,7 +22,7 @@ struct Args {
     sample_rate: f32,
 
     /// verbose
-    #[argh(option, short = 'v', default = "false")]
+    #[argh(switch, short = 'v')]
     verbose: bool,
 }
 
@@ -32,13 +34,14 @@ fn main() {
 
     let data = args.message.as_bytes();
     let start = Instant::now();
-    let samples = config.encode_data(data);
+    let key = Aes128GcmSiv::generate_key(&mut OsRng);
+    let samples = config.encode_data(data, &key);
     let elapsed = start.elapsed();
     if args.verbose {
         eprintln!("Encoding time: {:?}", elapsed);
     }
 
-    let dec = config.decode(&samples);
+    let dec = config.decode(&samples, &key);
     let dec = String::from_utf8(dec).unwrap();
 
     eprintln!("{}", dec);
