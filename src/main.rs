@@ -1,8 +1,7 @@
 use std::time::{Duration, Instant};
 
-use aes_gcm_siv::Aes128GcmSiv;
+use aes_gcm_siv::{Aes128GcmSiv, KeyInit, aead::OsRng};
 use argh::FromArgs;
-use chacha20poly1305::{ChaCha20Poly1305, KeyInit, aead::OsRng};
 use dosr::Dosr;
 use hound::{WavSpec, WavWriter};
 
