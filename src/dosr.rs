@@ -1,7 +1,7 @@
 use std::f32;
 
 use aes_gcm_siv::{
-    AeadCore, Aes128GcmSiv, KeyInit, Nonce,
+    AeadCore, Aes128GcmSiv, Nonce,
     aead::{Aead, OsRng},
 };
 use bitvec::{order::Msb0, view::BitView};
@@ -51,6 +51,10 @@ impl Dosr {
             duration_s,
             sample_rate,
         }
+    }
+
+    pub fn sample_rate(&self) -> f32 {
+        self.sample_rate
     }
 }
 
@@ -111,15 +115,9 @@ impl Dosr {
         samples
     }
 
-    pub fn encode_data(
-        &self,
-        data: &[u8],
-        key: &Option<aes_gcm_siv::Key<Aes128GcmSiv>>,
-    ) -> Vec<f32> {
-        let payload = if let Some(key) = key {
-            let cipher = Aes128GcmSiv::new(key);
+    pub fn encode_data(&self, data: &[u8], cipher: &Option<Aes128GcmSiv>) -> Vec<f32> {
+        let payload = if let Some(cipher) = cipher {
             let nonce = Aes128GcmSiv::generate_nonce(&mut OsRng);
-            eprintln!("Nonce: {}", nonce.len());
             let encrypted = cipher.encrypt(&nonce, data.as_ref()).unwrap();
             [nonce.to_vec(), encrypted].concat()
         } else {
@@ -193,7 +191,7 @@ impl Dosr {
             .collect_vec()
     }
 
-    pub fn decode(&self, samples: &[f32], key: &Option<aes_gcm_siv::Key<Aes128GcmSiv>>) -> Vec<u8> {
+    pub fn decode(&self, samples: &[f32], cipher: &Option<Aes128GcmSiv>) -> Vec<u8> {
         let payload = self
             .split_into_frames(samples)
             .flat_map(|frame| self.decode_frame(&frame))
@@ -201,8 +199,7 @@ impl Dosr {
             .into_iter()
             .map(|c| c.fold(0u8, |acc, x| (acc << self.bits_per_chunk) | (x)))
             .collect_vec();
-        if let Some(key) = key {
-            let cipher = Aes128GcmSiv::new(key);
+        if let Some(cipher) = cipher {
             let nonce = payload.iter().take(12).cloned().collect_vec();
             let encrypted = payload.into_iter().skip(12).collect_vec();
             let nonce = Nonce::from_slice(&nonce);
