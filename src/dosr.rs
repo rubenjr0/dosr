@@ -111,12 +111,20 @@ impl Dosr {
         samples
     }
 
-    pub fn encode_data(&self, data: &[u8], key: &aes_gcm_siv::Key<Aes128GcmSiv>) -> Vec<f32> {
-        let cipher = Aes128GcmSiv::new(key);
-        let nonce = Aes128GcmSiv::generate_nonce(&mut OsRng);
-        eprintln!("Nonce: {}", nonce.len());
-        let encrypted = cipher.encrypt(&nonce, data.as_ref()).unwrap();
-        let payload = [nonce.to_vec(), encrypted].concat();
+    pub fn encode_data(
+        &self,
+        data: &[u8],
+        key: &Option<aes_gcm_siv::Key<Aes128GcmSiv>>,
+    ) -> Vec<f32> {
+        let payload = if let Some(key) = key {
+            let cipher = Aes128GcmSiv::new(key);
+            let nonce = Aes128GcmSiv::generate_nonce(&mut OsRng);
+            eprintln!("Nonce: {}", nonce.len());
+            let encrypted = cipher.encrypt(&nonce, data.as_ref()).unwrap();
+            [nonce.to_vec(), encrypted].concat()
+        } else {
+            data.to_vec()
+        };
         let chunks = self.bytes_to_chunks(&payload);
         let frames = self.chunks_to_frames(&chunks);
         frames
@@ -185,8 +193,7 @@ impl Dosr {
             .collect_vec()
     }
 
-    pub fn decode(&self, samples: &[f32], key: &aes_gcm_siv::Key<Aes128GcmSiv>) -> Vec<u8> {
-        let cipher = Aes128GcmSiv::new(key);
+    pub fn decode(&self, samples: &[f32], key: &Option<aes_gcm_siv::Key<Aes128GcmSiv>>) -> Vec<u8> {
         let payload = self
             .split_into_frames(samples)
             .flat_map(|frame| self.decode_frame(&frame))
@@ -194,9 +201,14 @@ impl Dosr {
             .into_iter()
             .map(|c| c.fold(0u8, |acc, x| (acc << self.bits_per_chunk) | (x)))
             .collect_vec();
-        let nonce = payload.iter().take(12).cloned().collect_vec();
-        let encrypted = payload.into_iter().skip(12).collect_vec();
-        let nonce = Nonce::from_slice(&nonce);
-        cipher.decrypt(nonce, encrypted.as_ref()).unwrap()
+        if let Some(key) = key {
+            let cipher = Aes128GcmSiv::new(key);
+            let nonce = payload.iter().take(12).cloned().collect_vec();
+            let encrypted = payload.into_iter().skip(12).collect_vec();
+            let nonce = Nonce::from_slice(&nonce);
+            cipher.decrypt(nonce, encrypted.as_ref()).unwrap()
+        } else {
+            payload
+        }
     }
 }

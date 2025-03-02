@@ -20,6 +20,10 @@ struct Args {
     #[argh(option, short = 's', default = "44100.0")]
     sample_rate: f32,
 
+    /// encrypt the message
+    #[argh(switch, short = 'e')]
+    encrypt: bool,
+
     /// verbose
     #[argh(switch, short = 'v')]
     verbose: bool,
@@ -33,7 +37,11 @@ fn main() {
 
     let data = args.message.as_bytes();
     let start = Instant::now();
-    let key = Aes128GcmSiv::generate_key(&mut OsRng);
+    let key = if args.encrypt {
+        Some(Aes128GcmSiv::generate_key(&mut OsRng))
+    } else {
+        None
+    };
     let samples = config.encode_data(data, &key);
     let elapsed = start.elapsed();
     if args.verbose {
