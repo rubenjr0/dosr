@@ -64,33 +64,15 @@ fn main() {
         panic!("No action specified");
     }
     let samples = if args.encode {
-        encode(data, &dosr, &cipher, args.output_path, args.verbose)
+        encode(data, &dosr, &cipher, args.verbose)
     } else {
-        hound::WavReader::open(args.input_path.as_ref().unwrap())
+        hound::WavReader::open(args.input_path.as_ref().expect("Input path is required"))
             .expect("Failed to open input file")
             .samples()
             .flatten()
             .collect_vec()
     };
-    if args.decode {
-        decode(&samples, &dosr, &cipher, args.verbose);
-    }
-}
-
-fn encode(
-    data: &[u8],
-    dosr: &Dosr,
-    cipher: &Option<Aes128GcmSiv>,
-    output_path: Option<String>,
-    verbose: bool,
-) -> Vec<f32> {
-    let start = Instant::now();
-    let samples = dosr.encode_data(data, cipher);
-    let elapsed = start.elapsed();
-    if verbose {
-        eprintln!("Encoding time: {:?}", elapsed);
-    }
-    if let Some(path) = output_path {
+    if let Some(path) = args.output_path {
         let spec = WavSpec {
             channels: 1,
             sample_rate: dosr.sample_rate() as u32,
@@ -98,22 +80,34 @@ fn encode(
             sample_format: hound::SampleFormat::Float,
         };
 
-        let mut writer = WavWriter::create(path, spec).unwrap();
+        let mut writer = WavWriter::create(path, spec).expect("Failed to create output file");
         samples.iter().for_each(|s| {
-            writer.write_sample(*s).unwrap();
+            writer.write_sample(*s).expect("Failed to write sample");
         });
-        writer.finalize().unwrap();
+        writer.finalize().expect("Failed to finalize output file");
+    }
+    if args.decode {
+        let decoded = decode(&samples, &dosr, &cipher, args.verbose);
+        println!("{decoded}");
+    }
+}
+
+fn encode(data: &[u8], dosr: &Dosr, cipher: &Option<Aes128GcmSiv>, verbose: bool) -> Vec<f32> {
+    let start = Instant::now();
+    let samples = dosr.encode_data(data, cipher);
+    let elapsed = start.elapsed();
+    if verbose {
+        eprintln!("Encoding time: {:?}", elapsed);
     }
     samples
 }
 
-fn decode(samples: &[f32], dosr: &Dosr, cipher: &Option<Aes128GcmSiv>, verbose: bool) {
+fn decode(samples: &[f32], dosr: &Dosr, cipher: &Option<Aes128GcmSiv>, verbose: bool) -> String {
     let start = Instant::now();
     let decoded = dosr.decode(samples, cipher);
     let elapsed = start.elapsed();
     if verbose {
         eprintln!("Decoding time: {:?}", elapsed);
     }
-    let msg = String::from_utf8(decoded).unwrap();
-    eprintln!("{}", msg);
+    String::from_utf8(decoded).expect("Failed to decode message")
 }
