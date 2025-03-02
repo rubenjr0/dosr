@@ -55,7 +55,8 @@ fn main() {
     let data = args.message.as_bytes();
     let cipher = if let Some(key_path) = args.key_path {
         let key_bytes = std::fs::read(&key_path).expect("Failed to read key file");
-        let cipher = Aes128GcmSiv::new_from_slice(&key_bytes).expect("Failed to create cipher");
+        let cipher = Aes128GcmSiv::new_from_slice(&key_bytes)
+            .expect("Failed to create cipher, the key should be 12 bytes long");
         Some(cipher)
     } else {
         None
