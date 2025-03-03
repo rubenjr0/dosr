@@ -5,6 +5,7 @@ use argh::FromArgs;
 use dosr::Dosr;
 use hound::{WavSpec, WavWriter};
 use itertools::Itertools;
+use k256::{Secp256k1, elliptic_curve::PublicKey, pkcs8::DecodePublicKey};
 
 #[derive(FromArgs)]
 /// Arguments for DOSR
@@ -53,10 +54,27 @@ fn main() {
     let dosr = Dosr::new(4, 6, duration.as_secs_f32(), sample_rate);
 
     let data = args.message.as_bytes();
+    // todo
+    // 3 modes:
+    // 1. Unencrypted
+    // 2. Shared key
+    // 3. Asymetric key
     let cipher = if let Some(key_path) = args.key_path {
         let key_bytes = std::fs::read(&key_path).expect("Failed to read key file");
-        let cipher = Aes128GcmSiv::new_from_slice(&key_bytes)
-            .expect("Failed to create cipher, the key should be 12 bytes long");
+        let secret_key = k256::SecretKey::from_sec1_der(&key_bytes).unwrap();
+        let public_key_bytes = std::fs::read("public_key2.der").expect("Failed to read key file");
+
+        let public: PublicKey<Secp256k1> =
+            PublicKey::from_public_key_der(&public_key_bytes).unwrap();
+        let secret = k256::ecdh::diffie_hellman(secret_key.to_nonzero_scalar(), public.as_affine());
+        let mut key = vec![0u8; 16];
+        secret
+            .extract::<k256::sha2::Sha256>(None)
+            .expand(&[], &mut key)
+            .unwrap();
+        eprintln!("{key:0x?}");
+        let cipher = Aes128GcmSiv::new_from_slice(&key)
+            .expect("Failed to create cipher, the key should be 16 bytes long");
         Some(cipher)
     } else {
         None
