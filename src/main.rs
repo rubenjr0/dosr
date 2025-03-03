@@ -1,132 +1,171 @@
 use std::time::{Duration, Instant};
 
 use aes_gcm_siv::{Aes128GcmSiv, KeyInit};
-use argh::FromArgs;
+use anyhow::Result;
+use clap::{Parser, Subcommand};
 use dosr::Dosr;
 use hound::{WavSpec, WavWriter};
 use itertools::Itertools;
-use k256::{Secp256k1, elliptic_curve::PublicKey, pkcs8::DecodePublicKey};
+use k256::{Secp256k1, SecretKey, elliptic_curve::PublicKey, pkcs8::DecodePublicKey};
 
-#[derive(FromArgs)]
-/// Arguments for DOSR
-struct Args {
+#[derive(Subcommand)]
+enum Action {
+    Encode(EncodeArgs),
+    Decode(DecodeArgs),
+}
+
+#[derive(Parser)]
+/// Encode a message using DOSR
+struct EncodeArgs {
     /// message to encode
-    #[argh(positional)]
     message: String,
 
+    /// output file path
+    output_path: String,
+
+    /// encryption method: symmetric, asymmetric
+    #[command(subcommand)]
+    encryption: Option<Encryption>,
+}
+
+#[derive(Parser)]
+/// Decode a message using DOSR
+struct DecodeArgs {
+    /// output file path
+    input_path: String,
+
+    /// encryption method: symmetric, asymmetric
+    #[command(subcommand)]
+    encryption: Option<Encryption>,
+}
+
+#[derive(Subcommand)]
+enum Encryption {
+    Symmetric(SymmetricKey),
+    Asymmetric(AsymmetricKey),
+}
+
+#[derive(Parser)]
+/// Arguments for symmetric encryption
+struct SymmetricKey {
+    /// path to the key file
+    key_path: String,
+}
+
+#[derive(Parser)]
+/// Arguments for asymmetric encryption
+struct AsymmetricKey {
+    /// path to the private key der file
+    private_key_path: String,
+
+    /// path to the public key der file
+    public_key_path: String,
+}
+
+#[derive(Parser)]
+/// Arguments for DOSR
+struct Args {
     /// duration of each symbol in milliseconds
-    #[argh(option, default = "100")]
+    #[clap(short, default_value = "100")]
     duration_ms: u64,
 
     /// sample rate in Hz
-    #[argh(option, default = "44100.0")]
+    #[clap(long, default_value = "44100.0")]
     sample_rate: f32,
 
-    /// key path
-    #[argh(option, short = 'k')]
-    key_path: Option<String>,
+    /// action to perform: encode, decode
+    #[command(subcommand)]
+    action: Action,
 
-    /// perform encoding
-    #[argh(switch, short = 'e')]
-    encode: bool,
-
-    /// output file path
-    #[argh(option, short = 'o')]
-    output_path: Option<String>,
-
-    /// perform decoding
-    #[argh(switch, short = 'd')]
-    decode: bool,
-
-    /// input file path
-    #[argh(option, short = 'i')]
-    input_path: Option<String>,
-
-    /// verbose
-    #[argh(switch, short = 'v')]
-    verbose: bool,
+    /// do not display timing information
+    #[clap(short, action = clap::ArgAction::SetFalse)]
+    silent: bool,
 }
 
 fn main() {
-    let args: Args = argh::from_env();
+    let args = Args::parse();
     let duration = Duration::from_millis(args.duration_ms);
     let sample_rate = args.sample_rate;
     let dosr = Dosr::new(4, 6, duration.as_secs_f32(), sample_rate);
 
-    let data = args.message.as_bytes();
-    // todo
-    // 3 modes:
-    // 1. Unencrypted
-    // 2. Shared key
-    // 3. Asymetric key
-    let cipher = if let Some(key_path) = args.key_path {
-        let key_bytes = std::fs::read(&key_path).expect("Failed to read key file");
-        let secret_key = k256::SecretKey::from_sec1_der(&key_bytes).unwrap();
-        let public_key_bytes = std::fs::read("public_key2.der").expect("Failed to read key file");
-
-        let public: PublicKey<Secp256k1> =
-            PublicKey::from_public_key_der(&public_key_bytes).unwrap();
-        let secret = k256::ecdh::diffie_hellman(secret_key.to_nonzero_scalar(), public.as_affine());
-        let mut key = vec![0u8; 16];
-        secret
-            .extract::<k256::sha2::Sha256>(None)
-            .expand(&[], &mut key)
-            .unwrap();
-        eprintln!("{key:0x?}");
-        let cipher = Aes128GcmSiv::new_from_slice(&key)
-            .expect("Failed to create cipher, the key should be 16 bytes long");
-        Some(cipher)
-    } else {
-        None
-    };
-    if !(args.encode || args.decode) {
-        panic!("No action specified");
-    }
-    let samples = if args.encode {
-        encode(data, &dosr, &cipher, args.verbose)
-    } else {
-        hound::WavReader::open(args.input_path.as_ref().expect("Input path is required"))
-            .expect("Failed to open input file")
-            .samples()
-            .flatten()
-            .collect_vec()
-    };
-    if let Some(path) = args.output_path {
-        let spec = WavSpec {
-            channels: 1,
-            sample_rate: dosr.sample_rate() as u32,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        };
-
-        let mut writer = WavWriter::create(path, spec).expect("Failed to create output file");
-        samples.iter().for_each(|s| {
-            writer.write_sample(*s).expect("Failed to write sample");
-        });
-        writer.finalize().expect("Failed to finalize output file");
-    }
-    if args.decode {
-        let decoded = decode(&samples, &dosr, &cipher, args.verbose);
-        println!("{decoded}");
+    match args.action {
+        Action::Encode(encode_args) => encode(&encode_args, &dosr, args.silent),
+        Action::Decode(decode_args) => decode(&decode_args, &dosr, args.silent),
     }
 }
 
-fn encode(data: &[u8], dosr: &Dosr, cipher: &Option<Aes128GcmSiv>, verbose: bool) -> Vec<f32> {
+fn encode(args: &EncodeArgs, dosr: &Dosr, silent: bool) {
+    let data = args.message.as_bytes();
+    let cipher = create_cipher(&args.encryption).expect("Failed to create cipher");
     let start = Instant::now();
-    let samples = dosr.encode_data(data, cipher);
+    let samples = dosr.encode_data(data, &cipher);
     let elapsed = start.elapsed();
-    if verbose {
+    if !silent {
         eprintln!("Encoding time: {:?}", elapsed);
     }
-    samples
+    let spec = WavSpec {
+        channels: 1,
+        sample_rate: dosr.sample_rate() as u32,
+        bits_per_sample: 32,
+        sample_format: hound::SampleFormat::Float,
+    };
+
+    let mut writer =
+        WavWriter::create(&args.output_path, spec).expect("Failed to create output file");
+    samples.iter().for_each(|s| {
+        writer.write_sample(*s).expect("Failed to write sample");
+    });
+    writer.finalize().expect("Failed to finalize output file");
 }
 
-fn decode(samples: &[f32], dosr: &Dosr, cipher: &Option<Aes128GcmSiv>, verbose: bool) -> String {
+fn decode(args: &DecodeArgs, dosr: &Dosr, silent: bool) {
+    let samples = hound::WavReader::open(&args.input_path)
+        .expect("Failed to open input file")
+        .samples()
+        .flatten()
+        .collect_vec();
+    let cipher = create_cipher(&args.encryption).expect("Failed to create cipher");
     let start = Instant::now();
-    let decoded = dosr.decode(samples, cipher);
+    let decoded = dosr.decode(&samples, &cipher);
     let elapsed = start.elapsed();
-    if verbose {
+    if !silent {
         eprintln!("Decoding time: {:?}", elapsed);
     }
-    String::from_utf8(decoded).expect("Failed to decode message")
+    let decoded = String::from_utf8(decoded).expect("Failed to decode message");
+    println!("{decoded}");
+}
+
+fn create_cipher(encryption_options: &Option<Encryption>) -> Result<Option<Aes128GcmSiv>> {
+    let Some(encryption_options) = encryption_options else {
+        return Ok(None);
+    };
+
+    let key = match encryption_options {
+        Encryption::Symmetric(SymmetricKey { key_path }) => std::fs::read(key_path)?,
+        Encryption::Asymmetric(AsymmetricKey {
+            private_key_path,
+            public_key_path,
+        }) => {
+            let private_key_bytes = std::fs::read(private_key_path)?;
+            let private_key = SecretKey::from_sec1_der(&private_key_bytes)?;
+            let public_key = PublicKey::<Secp256k1>::read_public_key_der_file(public_key_path)?;
+            let secret =
+                k256::ecdh::diffie_hellman(private_key.to_nonzero_scalar(), public_key.as_affine());
+            let mut key = vec![0u8; 16];
+            secret
+                .extract::<k256::sha2::Sha256>(None)
+                .expand(&[], &mut key)
+                .map_err(|err| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("Failed to expand key: {}", err),
+                    )
+                })?;
+            key
+        }
+    };
+
+    let cipher = Aes128GcmSiv::new_from_slice(&key)
+        .expect("Failed to create cipher, the key should be 16 bytes long");
+    Ok(Some(cipher))
 }
