@@ -18,18 +18,20 @@ pub enum Action {
         input_path: String,
 
         /// encryption method: symmetric, asymmetric
-        #[command(subcommand)]
+        #[command(subcommand, name = "encryption_options")]
         encryption_options: Option<Encryption>,
     },
 }
 
 #[derive(Subcommand)]
 pub enum Encryption {
-    Symmetric {
+    /// symmetric encryption
+    Sym {
         /// path to the key file
         key_path: String,
     },
-    Asymmetric {
+    /// asymmetric encryption
+    Asym {
         /// path to the private key der file
         private_key_path: String,
 
@@ -53,7 +55,7 @@ pub struct Args {
     #[command(subcommand)]
     pub action: Action,
 
-    /// do not display timing information
-    #[clap(short, action = clap::ArgAction::SetFalse)]
-    pub silent: bool,
+    /// display timing information
+    #[clap(short, action = clap::ArgAction::SetTrue)]
+    pub verbose: bool,
 }

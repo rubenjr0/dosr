@@ -1,9 +1,5 @@
 use std::f32;
 
-use aes_gcm_siv::{
-    AeadCore, Aes128GcmSiv, Nonce,
-    aead::{Aead, OsRng},
-};
 use bitvec::{order::Msb0, view::BitView};
 use itertools::Itertools;
 use rustfft::{FftPlanner, num_complex::Complex};
@@ -151,15 +147,8 @@ impl Dosr {
         samples
     }
 
-    pub fn encode_data(&self, data: &[u8], cipher: &Option<Aes128GcmSiv>) -> Vec<f32> {
-        let payload = if let Some(cipher) = cipher {
-            let nonce = Aes128GcmSiv::generate_nonce(&mut OsRng);
-            let encrypted = cipher.encrypt(&nonce, data.as_ref()).unwrap();
-            [nonce.to_vec(), encrypted].concat()
-        } else {
-            data.to_vec()
-        };
-        let chunks = self.bytes_to_chunks(&payload);
+    pub fn encode_data(&self, data: &[u8]) -> Vec<f32> {
+        let chunks = self.bytes_to_chunks(data);
         let frames = self.chunks_to_frames(&chunks);
         frames
             .into_iter()
@@ -227,21 +216,12 @@ impl Dosr {
             .collect_vec()
     }
 
-    pub fn decode(&self, samples: &[f32], cipher: &Option<Aes128GcmSiv>) -> Vec<u8> {
-        let payload = self
-            .split_into_frames(samples)
+    pub fn decode(&self, samples: &[f32]) -> Vec<u8> {
+        self.split_into_frames(samples)
             .flat_map(|frame| self.decode_frame(&frame))
             .chunks(8 / self.bits_per_chunk)
             .into_iter()
             .map(|c| c.fold(0u8, |acc, x| (acc << self.bits_per_chunk) | (x)))
-            .collect_vec();
-        if let Some(cipher) = cipher {
-            let nonce = payload.iter().take(12).cloned().collect_vec();
-            let encrypted = payload.into_iter().skip(12).collect_vec();
-            let nonce = Nonce::from_slice(&nonce);
-            cipher.decrypt(nonce, encrypted.as_ref()).unwrap()
-        } else {
-            payload
-        }
+            .collect_vec()
     }
 }

@@ -1,0 +1,9 @@
+[package]
+name = "dosr"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bitvec = "1.0.1"
+itertools = "0.14.0"
+rustfft = "6.2.0"

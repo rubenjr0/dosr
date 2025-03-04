@@ -1,6 +1,9 @@
 use std::time::{Duration, Instant};
 
-use aes_gcm_siv::{Aes128GcmSiv, KeyInit};
+use aes_gcm_siv::{
+    AeadCore, Aes128GcmSiv, KeyInit, Nonce,
+    aead::{Aead, OsRng},
+};
 use anyhow::Result;
 use args::{Action, Args, Encryption};
 use clap::Parser;
@@ -29,12 +32,12 @@ fn main() {
             &output_path,
             &encryption_options,
             &dosr,
-            args.silent,
+            args.verbose,
         ),
         Action::Decode {
             input_path,
             encryption_options,
-        } => decode(&input_path, &encryption_options, &dosr, args.silent),
+        } => decode(&input_path, &encryption_options, &dosr, args.verbose),
     }
 }
 
@@ -43,15 +46,25 @@ fn encode(
     output_path: &str,
     encryption_options: &Option<Encryption>,
     dosr: &Dosr,
-    silent: bool,
+    verbose: bool,
 ) {
-    let data = message.as_bytes();
-    let cipher = create_cipher(encryption_options).expect("Failed to create cipher");
+    let data = message.as_bytes().to_vec();
     let start = Instant::now();
-    let samples = dosr.encode_data(data, &cipher);
-    let elapsed = start.elapsed();
-    if !silent {
-        eprintln!("Encoding time: {:?}", elapsed);
+    let data =
+        if let Some(cipher) = create_cipher(encryption_options).expect("Failed to create cipher") {
+            let nonce = Aes128GcmSiv::generate_nonce(&mut OsRng);
+            let encrypted = cipher.encrypt(&nonce, data.as_ref()).unwrap();
+            [nonce.to_vec(), encrypted].concat()
+        } else {
+            data
+        };
+    let encryption_time = start.elapsed();
+    let start = Instant::now();
+    let samples = dosr.encode_data(&data);
+    let encoding_time = start.elapsed();
+    if verbose {
+        eprintln!("Encoding time: {:?}", encoding_time);
+        eprintln!("Encryption time: {:?}", encryption_time);
     }
     let spec = WavSpec {
         channels: 1,
@@ -67,21 +80,32 @@ fn encode(
     writer.finalize().expect("Failed to finalize output file");
 }
 
-fn decode(input_path: &str, encryption_options: &Option<Encryption>, dosr: &Dosr, silent: bool) {
+fn decode(input_path: &str, encryption_options: &Option<Encryption>, dosr: &Dosr, verbose: bool) {
     let samples = hound::WavReader::open(input_path)
         .expect("Failed to open input file")
         .samples()
         .flatten()
         .collect_vec();
-    let cipher = create_cipher(encryption_options).expect("Failed to create cipher");
     let start = Instant::now();
-    let decoded = dosr.decode(&samples, &cipher);
-    let elapsed = start.elapsed();
-    if !silent {
-        eprintln!("Decoding time: {:?}", elapsed);
+    let decoded = dosr.decode(&samples);
+    let decoding_time = start.elapsed();
+    let start = Instant::now();
+    let decoded =
+        if let Some(cipher) = create_cipher(encryption_options).expect("Failed to create cipher") {
+            let nonce = decoded.iter().take(12).cloned().collect_vec();
+            let encrypted = decoded.into_iter().skip(12).collect_vec();
+            let nonce = Nonce::from_slice(&nonce);
+            cipher.decrypt(nonce, encrypted.as_ref()).unwrap()
+        } else {
+            decoded
+        };
+    let decryption_time = start.elapsed();
+    if verbose {
+        eprintln!("Decoding time: {:?}", decoding_time);
+        eprintln!("Decryption time: {:?}", decryption_time);
     }
     let decoded = String::from_utf8(decoded).expect("Failed to decode message");
-    println!("{decoded}");
+    println!("Decoded message:\n{decoded}");
 }
 
 fn create_cipher(encryption_options: &Option<Encryption>) -> Result<Option<Aes128GcmSiv>> {
@@ -90,8 +114,8 @@ fn create_cipher(encryption_options: &Option<Encryption>) -> Result<Option<Aes12
     };
 
     let key = match encryption_options {
-        Encryption::Symmetric { key_path } => std::fs::read(key_path)?,
-        Encryption::Asymmetric {
+        Encryption::Sym { key_path } => std::fs::read(key_path)?,
+        Encryption::Asym {
             private_key_path,
             public_key_path,
         } => {
