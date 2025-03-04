@@ -2,101 +2,51 @@ use std::time::{Duration, Instant};
 
 use aes_gcm_siv::{Aes128GcmSiv, KeyInit};
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use args::{Action, Args, Encryption};
+use clap::Parser;
 use dosr::Dosr;
 use hound::{WavSpec, WavWriter};
 use itertools::Itertools;
 use k256::{Secp256k1, SecretKey, elliptic_curve::PublicKey, pkcs8::DecodePublicKey};
 
-#[derive(Subcommand)]
-enum Action {
-    Encode(EncodeArgs),
-    Decode(DecodeArgs),
-}
-
-#[derive(Parser)]
-/// Encode a message using DOSR
-struct EncodeArgs {
-    /// message to encode
-    message: String,
-
-    /// output file path
-    output_path: String,
-
-    /// encryption method: symmetric, asymmetric
-    #[command(subcommand)]
-    encryption: Option<Encryption>,
-}
-
-#[derive(Parser)]
-/// Decode a message using DOSR
-struct DecodeArgs {
-    /// output file path
-    input_path: String,
-
-    /// encryption method: symmetric, asymmetric
-    #[command(subcommand)]
-    encryption: Option<Encryption>,
-}
-
-#[derive(Subcommand)]
-enum Encryption {
-    Symmetric(SymmetricKey),
-    Asymmetric(AsymmetricKey),
-}
-
-#[derive(Parser)]
-/// Arguments for symmetric encryption
-struct SymmetricKey {
-    /// path to the key file
-    key_path: String,
-}
-
-#[derive(Parser)]
-/// Arguments for asymmetric encryption
-struct AsymmetricKey {
-    /// path to the private key der file
-    private_key_path: String,
-
-    /// path to the public key der file
-    public_key_path: String,
-}
-
-#[derive(Parser)]
-/// Arguments for DOSR
-struct Args {
-    /// duration of each symbol in milliseconds
-    #[clap(short, default_value = "100")]
-    duration_ms: u64,
-
-    /// sample rate in Hz
-    #[clap(long, default_value = "44100.0")]
-    sample_rate: f32,
-
-    /// action to perform: encode, decode
-    #[command(subcommand)]
-    action: Action,
-
-    /// do not display timing information
-    #[clap(short, action = clap::ArgAction::SetFalse)]
-    silent: bool,
-}
+mod args;
 
 fn main() {
     let args = Args::parse();
     let duration = Duration::from_millis(args.duration_ms);
     let sample_rate = args.sample_rate;
-    let dosr = Dosr::new(4, 6, duration.as_secs_f32(), sample_rate);
+    let dosr = Dosr::default()
+        .with_duration_s(duration.as_secs_f32())
+        .with_sample_rate(sample_rate);
 
     match args.action {
-        Action::Encode(encode_args) => encode(&encode_args, &dosr, args.silent),
-        Action::Decode(decode_args) => decode(&decode_args, &dosr, args.silent),
+        Action::Encode {
+            message,
+            output_path,
+            encryption_options,
+        } => encode(
+            &message,
+            &output_path,
+            &encryption_options,
+            &dosr,
+            args.silent,
+        ),
+        Action::Decode {
+            input_path,
+            encryption_options,
+        } => decode(&input_path, &encryption_options, &dosr, args.silent),
     }
 }
 
-fn encode(args: &EncodeArgs, dosr: &Dosr, silent: bool) {
-    let data = args.message.as_bytes();
-    let cipher = create_cipher(&args.encryption).expect("Failed to create cipher");
+fn encode(
+    message: &str,
+    output_path: &str,
+    encryption_options: &Option<Encryption>,
+    dosr: &Dosr,
+    silent: bool,
+) {
+    let data = message.as_bytes();
+    let cipher = create_cipher(encryption_options).expect("Failed to create cipher");
     let start = Instant::now();
     let samples = dosr.encode_data(data, &cipher);
     let elapsed = start.elapsed();
@@ -110,21 +60,20 @@ fn encode(args: &EncodeArgs, dosr: &Dosr, silent: bool) {
         sample_format: hound::SampleFormat::Float,
     };
 
-    let mut writer =
-        WavWriter::create(&args.output_path, spec).expect("Failed to create output file");
+    let mut writer = WavWriter::create(output_path, spec).expect("Failed to create output file");
     samples.iter().for_each(|s| {
         writer.write_sample(*s).expect("Failed to write sample");
     });
     writer.finalize().expect("Failed to finalize output file");
 }
 
-fn decode(args: &DecodeArgs, dosr: &Dosr, silent: bool) {
-    let samples = hound::WavReader::open(&args.input_path)
+fn decode(input_path: &str, encryption_options: &Option<Encryption>, dosr: &Dosr, silent: bool) {
+    let samples = hound::WavReader::open(input_path)
         .expect("Failed to open input file")
         .samples()
         .flatten()
         .collect_vec();
-    let cipher = create_cipher(&args.encryption).expect("Failed to create cipher");
+    let cipher = create_cipher(encryption_options).expect("Failed to create cipher");
     let start = Instant::now();
     let decoded = dosr.decode(&samples, &cipher);
     let elapsed = start.elapsed();
@@ -141,11 +90,11 @@ fn create_cipher(encryption_options: &Option<Encryption>) -> Result<Option<Aes12
     };
 
     let key = match encryption_options {
-        Encryption::Symmetric(SymmetricKey { key_path }) => std::fs::read(key_path)?,
-        Encryption::Asymmetric(AsymmetricKey {
+        Encryption::Symmetric { key_path } => std::fs::read(key_path)?,
+        Encryption::Asymmetric {
             private_key_path,
             public_key_path,
-        }) => {
+        } => {
             let private_key_bytes = std::fs::read(private_key_path)?;
             let private_key = SecretKey::from_sec1_der(&private_key_bytes)?;
             let public_key = PublicKey::<Secp256k1>::read_public_key_der_file(public_key_path)?;

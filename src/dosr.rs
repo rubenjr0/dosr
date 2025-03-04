@@ -35,22 +35,58 @@ pub struct Dosr {
     duration_s: f32,
 }
 
+impl Default for Dosr {
+    fn default() -> Self {
+        Self {
+            base_freq: F0,
+            delta_freq: DF,
+            chunks_per_frame: 6,
+            bits_per_chunk: 4,
+            values_per_chunk: 16,
+            duration_s: 0.1,
+            sample_rate: 44100.0,
+        }
+    }
+}
+
 impl Dosr {
     pub fn new(
+        base_freq: f32,
+        delta_freq: f32,
         bits_per_chunk: usize,
         chunks_per_frame: usize,
         duration_s: f32,
         sample_rate: f32,
     ) -> Self {
         Self {
-            base_freq: F0,
-            delta_freq: DF,
+            base_freq,
+            delta_freq,
             chunks_per_frame,
             bits_per_chunk,
             values_per_chunk: 2usize.pow(bits_per_chunk as u32),
             duration_s,
             sample_rate,
         }
+    }
+
+    pub fn with_base_freq(mut self, base_freq: f32) -> Self {
+        self.base_freq = base_freq;
+        self
+    }
+
+    pub fn with_delta_freq(mut self, delta_freq: f32) -> Self {
+        self.delta_freq = delta_freq;
+        self
+    }
+
+    pub fn with_duration_s(mut self, duration_s: f32) -> Self {
+        self.duration_s = duration_s;
+        self
+    }
+
+    pub fn with_sample_rate(mut self, sample_rate: f32) -> Self {
+        self.sample_rate = sample_rate;
+        self
     }
 
     pub fn sample_rate(&self) -> f32 {
