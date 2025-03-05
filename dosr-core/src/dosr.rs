@@ -40,7 +40,7 @@ impl Default for Dosr {
             bits_per_chunk: 4,
             values_per_chunk: 16,
             duration_s: 0.1,
-            sample_rate: 44100.0,
+            sample_rate: 48000.0,
         }
     }
 }

@@ -48,7 +48,7 @@ pub struct Args {
     pub duration_ms: u64,
 
     /// sample rate in Hz
-    #[clap(long, default_value = "44100.0")]
+    #[clap(long, default_value = "48000.0")]
     pub sample_rate: f32,
 
     /// action to perform: encode, decode

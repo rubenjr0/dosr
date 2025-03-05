@@ -66,6 +66,7 @@ fn encode(
         eprintln!("Encoding time: {:?}", encoding_time);
         eprintln!("Encryption time: {:?}", encryption_time);
     }
+
     let spec = WavSpec {
         channels: 1,
         sample_rate: dosr.sample_rate() as u32,
